@@ -1,0 +1,234 @@
+---
+title: "Waste processing in the European Union"
+author: "Alexis Janon"
+output: html_document
+bibliography: references.bib
+csl: ieee.csl
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, message=FALSE, results='hide', include=FALSE}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(eurostat)
+```
+
+# Introduction
+
+During the 20th century, waste generation in first-world countries increased dramatically. To tackle this issue, many countries resorted to landfilling as a way to get rid of the accumulated waste. [@env_hist]
+
+However, it was proven that landfills pollute the soil and water of areas where they are located, rendering them unsuitable. [@Fatta1999, @SALEM2008108].
+
+With the help of the European statistical office Eurostat (ec.europa.eu/eurostat/), we will try to understand the role of waste in the recent years of the European Union. The analysis will focus on packaging waste, as it got a lot of attention in the recent years. Furthermore, the goal of this project is to understand a bit more the waste management in the EU, and to ascertain the veracity of results written in some articles.
+
+The definitions used in this report will be based on the official European Union directive, which gives precise legal characterization. [@directive9462ec]
+
+# Eurostat
+
+Eurostat is the statistical office of the European Union. Its goal is to produce high quality statistics for the European Union and the Member States.
+
+For waste management, Eurostat collects and analyzes the data. The collection itself is done by the member states, usually through their Ministry of Environment. The quality, accuracy and coherence of the data is considered to be high for all states. [@env_waspac]
+
+The CRAN repository contains a package aptly named _eurostat_ which can be used for ease of accessing the eurostat data:
+```{r get_eurostat}
+get_eurostat("env_wasgen", type="label")
+```
+
+
+# Analysis methodology
+
+This project will focus in a first part on waste data made with aggregated data for all of the member states.  At first, this was considered incorrect, but on closer inspection, this is relevant for all kinds of waste and packaging, as there are clear definitions decreed by the European Union. [@directive9462ec] The discrepancies found in the beginning were due to not properly defined data in the set. This data will be removed or ignored when needed and an explanation will be provided as to why.
+
+The second part will focus on some specific countries. In particular, we will study waste management for Belgium, Germany, Sweden and Denmark as these countries are often considered as the best european countries for recycling. [@bestrecy1, @bestrecy2, @bestrecy3, @bestrecy4, @bestrecy5]
+
+# Packaging vs. total waste generation
+
+In this section, the focus will be on the total generated waste weight in tonne as the data retrieval procedure is completely defined in this case.
+
+## General waste generation
+
+The general waste generation data is available in the _env\_wasgen_ table. For our analysis, we will focus on total waste generation (in tonne), excluding mineral wastes (due to mining for instance) and hazardous materials. All economic activities and households are accounted for in this scenario. This should be accurate as packaging waste is not considered hazardous, nor mineral waste [@directive9462ec].
+
+This data will be used to compute the part of packaging waste in the total waste for all member states except Croatia as it lacks sufficient data for the packaging waste generation (because it arrived in the EU later than the others).
+
+It should be noted that the european waste directive may change its definitions based on scientific or technological advancements. It is not indicated whether older data should be updated to fulfill the new definitions or stay as is. This could lead to some discrepancies, and should be remembered for the analysis.
+
+```{r env_wasgen}
+env_wasgen <- get_eurostat("env_wasgen")
+wasgen <- env_wasgen[env_wasgen$waste=="TOT_X_MIN" & env_wasgen$hazard=="NHAZ" & env_wasgen$nace_r2=="TOTAL_HH",]
+wasgen_t <- wasgen[wasgen$unit=="T",]
+wasgen_eu28_hr <- wasgen_t[wasgen_t$geo %in% c("EU28", "HR"), c("geo", "time", "values")]
+wasgen_eu27 <- wasgen_eu28_hr %>%
+    spread(geo, values) %>%
+    mutate(values = EU28 - HR) %>% 
+    select(time, values)
+print(wasgen_eu27)
+```
+
+## Packaging waste generation
+
+We can now get the packaging waste generation from the _env\_waspac_ table. For this computation, the total packaging weight will be used.
+
+Actually, the waste directive defines that the total packaging waste weight that should be considered is equal to:
+\[\textrm{waste} = \textrm{domestic waste} + \textrm{imported waste} - \textrm{exported waste}\]
+The aggregated data for the packaging has this computation already done.
+
+```{r env_waspac}
+env_waspac <- get_eurostat("env_waspac")
+waspac_gen_eu27 <- env_waspac[env_waspac$wst_oper=="GEN" & env_waspac$unit=="T" & env_waspac$geo == "EU27" & env_waspac$waste=="W1501",]
+```
+
+
+## Packaging waste part
+
+In this part, we will compute the part taken by packaging for the total waste. The collect frequency of the data varies for both tables, so the comparison will only be done on the years where both are present.
+
+```{r packaging_part}
+pac_part <- data.frame(wasgen_eu27["time"],
+                       100*waspac_gen_eu27[!waspac_gen_eu27$time %in% wasgen_eu27$time,"values"] / wasgen_eu27$values)
+ggplot(pac_part, aes(time, values)) + geom_col() + scale_x_date(date_break="2 year", date_labels="%Y") + xlab("Year") + ylab("Percentage (%)") + ggtitle("Percentage of packaging waste in total waste for the EU27", subtitle="Collected every 2 years")
+```
+
+Packaging account for less than 10% of the total produced waste in the European Union. While not the majority of the production, it is still an important figure, especially considering the value by itself: about 80 million tonnes every year.
+
+
+# Packaging types
+
+Packaging can be separated according to the material used, which is particularly useful for recycling. Eurostat divides packaging in different types:
+```{r waste_type}
+unique(label_eurostat(env_waspac)["waste"])
+```
+
+In this list, _Steel_, _Aluminium_ and the _Others_ sub categories are not properly defined in the directive. They will be removed in all subsequent analysis as they are not standardized across all states. The _Packaging_ category represents the aggregated data of all others.
+
+## Packaging types time series
+
+```{r waste_type_time}
+ggplot(label_eurostat(env_waspac[env_waspac$wst_oper=="GEN" & env_waspac$unit=="T" & env_waspac$geo == "EU27" & !env_waspac$waste %in% c("W1501", "W15010401", "W15010402", "W150199"),]), aes(time, values, fill=reorder(waste, values))) + geom_col() + scale_x_date(date_break="1 year", date_labels="%y") + xlab("Year (last 2 digits)") + ylab("Weight (T)") + ggtitle("Standardized packaging types weight for the EU27", subtitle="Collected every year") + scale_fill_discrete(name = "Packaging type")
+```
+
+Here, it can be noted that there is a sharp drop after the year 2008: this is likely due to the economic crisis.
+
+One other interesting point here is that all packaging types keep roughly the same size across ten years, except for paper and cardboard packaging which increases.
+
+This also challenges the belief that the majority of packaging is made of plastic. The majority of the weight is taken by paper and carboard packaging. This difference may also be due to the fact that plastic is usually lighter than paper packaging or only in small quantities (e.g. thin sheets of plastic).
+
+# Packaging recovery and recycling
+
+## Waste operation types
+
+Eurostat distinguishes between several recovery and recycling schemes:
+```{r wst_oper_type}
+unique(label_eurostat(env_waspac)["wst_oper"])
+```
+
+We will only focus on the generic categories _Generation_, _Recovery_, and _Recycling_, as they are defined in the european waste directive.
+
+Note: Recovery indicates all type of possible use of the waste. This includes incineration with energy recovery, and other methods (such as composting for food).
+
+However, there is no data on what happens to waste that is not recovered. Some reports indicate that it is used in landfilling, but it may also not be collected at all: it could be thrown out in the wild, burnt. It should also be noted that _Recycling_ is a part of the total amount of _Recovery_.
+
+## Packaging waste recovery time series
+
+```{r wst_oper_type_time}
+waspac_eu27 <- env_waspac[env_waspac$waste == "W1501" & env_waspac$geo == "EU27" & env_waspac$unit == "T",]
+ggplot(label_eurostat(env_waspac[env_waspac$waste == "W1501" & env_waspac$geo == "EU27" & env_waspac$unit == "T",]), aes(time, values, color=wst_oper)) + geom_line() + geom_point() + scale_x_date(date_break="1 year", date_labels="%y") + xlab("Year (last 2 digits)") + ylab("Weight (T)") + ggtitle("Packaging waste generation, recovery and recycling", subtitle="27 first member states") + ylim(0, NA) + scale_color_discrete(name = "Operation type")
+```
+
+Unsuprisingly, the graph here shows the same sharp drop after the year 2008, which can likely also be attributed to the economic crisis.
+
+In addition, a large part of the packaging waste is recovered one way or another, and recycling plays a large part in it.
+
+A large part of the generated packaging waste is not recovered each year. This could lead to problems regarding the processing of the ever-increasing not recycled waste.
+
+## Increase in unrecovered packaging waste
+
+In this section, the analysis will concern the amount of unrecovered waste each year. In the last ten years, how much waste has accumulated?
+
+
+```{r waste_increase}
+waspac_tot_eu27_cumsum <- waspac_eu27[waspac_eu27$unit=="T" & waspac_eu27$wst_oper %in% c("GEN", "RCV"),] %>%
+    spread(wst_oper, values) %>%
+    mutate(values = GEN - RCV) %>%
+    mutate(values = cumsum(values)) %>%
+    select(time, values)
+ggplot(waspac_tot_eu27_cumsum, aes(time, values)) + geom_col() + scale_x_date(date_break="1 year", date_labels="%y") + xlab("Year (last 2 digits)") + ylab("Weight (T)") + ggtitle("Accumulated unrecovered waste weight since 2005") + ylim(0, NA)
+```
+
+The accumulated sum has grown steadily over the years. It is hard to understand exactly what happens to this waste as there is no data about it.
+
+
+# Country analysis
+
+Some European states are usually considered as 'champions' of recycling. This is the case for Belgium, Germany, Sweden and Denmark.
+
+Each state will be analyzed independently at first, and will then be compared. The methodology here is the same as before: we will study the global packaging weight in tonne for each of the three defined categories: _Generation_, _Recovery_, _Recycling_.
+
+## Belgium:
+```{r be}
+ggplot(label_eurostat(env_waspac[env_waspac$waste == "W1501" & env_waspac$wst_oper %in% c("GEN", "RCV", "RCY") & env_waspac$unit == "T" & env_waspac$geo == "BE",]), aes(time, values, color=wst_oper)) + geom_line() + geom_point() + scale_x_date(date_break="1 year", date_labels="%y") + xlab("Year (last 2 digits)") + ylab("Weight (T)") + ggtitle("Packaging waste generation, recovery and recycling", subtitle="Belgium") + ylim(0, NA) + scale_color_discrete(name = "Operation type")
+```
+
+Belgium appears to have particularly good recovery and recycling rates. Searching for the reason indicates the there is an important public awareness about waste retrieval. Furthermore, the relatively small populatoin and territory might help by making it easier to create dedicated infrastructure. [@bestrecy4]
+
+## Germany:
+```{r de}
+ggplot(label_eurostat(env_waspac[env_waspac$waste == "W1501" & env_waspac$wst_oper %in% c("GEN", "RCV", "RCY") & env_waspac$unit == "T" & env_waspac$geo == "DE",]), aes(time, values, color=wst_oper)) + geom_line() + geom_point() + scale_x_date(date_break="1 year", date_labels="%y") + xlab("Year (last 2 digits)") + ylab("Weight (T)") + ggtitle("Packaging waste generation, recovery and recycling", subtitle="Germany") + ylim(0, NA) + scale_color_discrete(name = "Operation type")
+```
+
+As for Belgium, it appears that Germany has important waste retrieval habits, and equally well-thought infrastructure which leads to high recovery and recycling values.
+
+## Sweden:
+```{r se}
+ggplot(label_eurostat(env_waspac[env_waspac$waste == "W1501" & env_waspac$wst_oper %in% c("GEN", "RCV", "RCY") & env_waspac$unit == "T" & env_waspac$geo == "SE",]), aes(time, values, color=wst_oper)) + geom_line() + geom_point() + scale_x_date(date_break="1 year", date_labels="%y") + xlab("Year (last 2 digits)") + ylab("Weight (T)") + ggtitle("Packaging waste generation, recovery and recycling", subtitle="Sweden") + ylim(0, NA) + scale_color_discrete(name = "Operation type")
+```
+
+This graph points out one very important information: in 2011, sweden recovered more waste than what was produced. This is likely due to the fact that Sweden usually imports waste from other countries as a means to create energy. [@bestrecy2] 
+
+## Denmark:
+```{r dk}
+ggplot(label_eurostat(env_waspac[env_waspac$waste == "W1501" & env_waspac$wst_oper %in% c("GEN", "RCV", "RCY") & env_waspac$unit == "T" & env_waspac$geo == "DK",]), aes(time, values, color=wst_oper)) + geom_line() + geom_point() + scale_x_date(date_break="1 year", date_labels="%y") + xlab("Year (last 2 digits)") + ylab("Weight (T)") + ggtitle("Packaging waste generation, recovery and recycling", subtitle="Denmark") + ylim(0, NA) + scale_color_discrete(name = "Operation type")
+```
+
+The high recovery rates of Denmark come from the government incentives to help retrieval of packaging. This principally takes the form of ``retrival machines'' which give back a few kroners for every bottle or can brought back. [@bestrecy5]
+
+## Summary
+
+The different countries will be compared on their waste generation and their recycling percentage, which is the most commonly used in newspapers. Furthermore, their value will be compared to the 2030 recycling targets of the EU: 75% of all packaging waste ought to be recycled. [@directive9462ec_pac]
+
+As the countries have varying number of inhabitants, it would not be relevant to compare the global generated weight. Instead, this analysis will be based on the average waste per inhabitant in kilograms. This is computed using the average population count on a year (to account for population movements) and the total generated waste.
+
+### Waste generation
+
+```{r states_gen}
+ggplot(env_waspac[env_waspac$waste == "W1501" & env_waspac$wst_oper == "GEN" & env_waspac$unit == "KG_HAB" & env_waspac$geo %in% c("BE", "DE", "SE", "DK"),], aes(time, values, color=geo)) + geom_line() + scale_x_date(date_break="1 year", date_labels="%y") + xlab("Year (last 2 digits)") + ylab("Average weight per inhabitant (kg)") + ggtitle("Packaging waste generation") + ylim(0, NA) + scale_color_discrete(name = "Country")
+```
+
+While Germany may have high recovery and recycling wastes, they are also a cut above other countries concerning the waste generation, and it is increasing. On the other hand, Sweden has had a much lower weight per inhabitant for the last few years, half of Germany during the same time.
+
+### Recycling
+
+```{r states_rcy}
+ggplot(env_waspac[env_waspac$waste == "W1501" & env_waspac$wst_oper == "RCY" & env_waspac$unit == "PC" & env_waspac$geo %in% c("BE", "DE", "SE", "DK"),], aes(time, values, color=geo)) + geom_line() + scale_x_date(date_break="1 year", date_labels="%y") + xlab("Year (last 2 digits)") + ylab("Average weight per inhabitant (kg)") + ggtitle("Packaging waste recycling") + ylim(0, 100) + scale_color_discrete(name = "Country") + geom_hline(yintercept = 75)
+```
+
+With this graph, it is quite obvious that Belgium has reached the 2030 target since long ago. Furthermore, it is the country with the highest recycling rate of all countries. The other are not far behind as far as the target is concerned. 
+
+## Country analysis conclusion
+
+The countries chosen for this analysis do have high rates of recovery and recycling. However, it is important to note that Germany has a mugh higher waste generation than the other states: even if the recycling part is important, this means that a much higher weight is not recyled. This is the contrary for Sweden, as they have lower rate of recovery and recycling, but a much lower waste production.
+
+# Conclusion
+
+While it is true that packaging waste is increasing throughout Europe, so does the recovery and recycling of the materials. Furthermore, the presence of stastical data shows that the countries (at least the European Union) has understood the scale of the problem, and will try to find ways to work on it.
+
+As for the study about the member states, its purpose was only to check whether the information that can be found in various newspapers was trustworthy. This is primordial, as sometimes contradictory information (or not based on the same metrics at least) may be found. [@bestrecy1, @bestrecy2, @bestrecy3, @bestrecy4, @bestrecy5].
+
+Further analysis could be done on the different types of packaging for each country, as well as to check which countries were up-to-date with the 2008 targets.
+
+
+# References
